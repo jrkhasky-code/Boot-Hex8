@@ -1,32 +1,102 @@
-name: Build Custom Switch Bootloader
+#include <stdint.h>
 
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+// ============================================================================
+// TEGRA X1 LOW-LEVEL DISPLAY HARDWARE REGISTERS (MMIO)
+// ============================================================================
+#define TEGRA_DC_A_BASE            0x54200000ULL
+#define DC_CMD_DISPLAY_COMMAND     0x000
+#define DC_CMD_DISPLAY_CONTROL     0x004
+#define DC_WIN_A_WIN_OPTIONS       0x200
+#define DC_WIN_A_COLOR_DEPTH       0x20C
+#define DC_WIN_A_BUFFER_CONTROL    0x21C
+#define DC_WIN_A_BASE_ADDR_0       0x220
+#define DC_WIN_A_SIZE_0            0x230
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    container: devkitpro/devkita64:latest
+// ============================================================================
+// UI AND HARDWARE CONSTANTS
+// ============================================================================
+#define SCREEN_WIDTH  1280
+#define SCREEN_HEIGHT 720
 
-    steps:
-    - name: Checkout repository code
-      uses: actions/checkout@v4
+// Professional Blue UI Palette (ARGB Format)
+#define COLOR_BG_BLUE       0xFF1A365D  // Deep professional navy blue backdrop
+#define COLOR_BUTTON_BLUE   0xFF3182CE  // Vibrant mid-blue for columns
+#define COLOR_WHITE         0xFFFFFFFF  // Crisp accent borders/text areas
 
-    - name: Upgrade core environment packages
-      run: |
-        sudo dkp-pacman -Syu --noconfirm
+// Safe memory address placement inside the Switch's RAM for our screen pixels
+uint32_t* frame_buffer = (uint32_t*)0x40000000ULL; 
 
-    - name: Compile Bootloader Payload
-      run: |
-        export DEVKITPRO=/opt/devkitpro
-        export PATH=$DEVKITPRO/devkitA64/bin:$PATH
-        make
+// ============================================================================
+// HARDWARE HELPER FUNCTIONS
+// ============================================================================
+static inline void REG_WRITE(uintptr_t base, uint32_t offset, uint32_t val) {
+    *(volatile uint32_t *)(base + (uintptr_t)offset) = val;
+}
 
-    - name: Upload Finished Binary Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: custom_bootloader_payload
-        path: custom_bootloader.bin
+void init_display_hardware(void) {
+    // 1. Force Display Controller A into standard active configuration mode
+    REG_WRITE(TEGRA_DC_A_BASE, DC_CMD_DISPLAY_COMMAND, 0x3); 
+    
+    // 2. Set pixel format depth to 32-bit color mapping (ARGB8888)
+    REG_WRITE(TEGRA_DC_A_BASE, DC_WIN_A_COLOR_DEPTH, 12); 
+    
+    // 3. Inform the controller of the screen resolution boundaries (1280 x 720)
+    REG_WRITE(TEGRA_DC_A_BASE, DC_WIN_A_SIZE_0, (SCREEN_HEIGHT << 16) | SCREEN_WIDTH);
+    
+    // 4. Bind our frame_buffer memory pointer memory pool to the active display scan out
+    REG_WRITE(TEGRA_DC_A_BASE, DC_WIN_A_BASE_ADDR_0, (uint32_t)(uintptr_t)frame_buffer);
+    
+    // 5. Push display pipeline modifications directly out to the console panel
+    REG_WRITE(TEGRA_DC_A_BASE, DC_CMD_DISPLAY_CONTROL, 0x10); 
+}
+
+// ============================================================================
+// GRAPHICS DRAWING ENGINE
+// ============================================================================
+void clear_screen(uint32_t color) {
+    for (int i = 0; i < (SCREEN_WIDTH * SCREEN_HEIGHT); i++) {
+        frame_buffer[i] = color;
+    }
+}
+
+void draw_rectangle(int x, int y, int width, int height, uint32_t color) {
+    for (int curr_y = y; curr_y < (y + height); curr_y++) {
+        for (int curr_x = x; curr_x < (x + width); curr_x++) {
+            // Prevent memory corruption by checking boundaries before painting a pixel
+            if (curr_x >= 0 && curr_x < SCREEN_WIDTH && curr_y >= 0 && curr_y < SCREEN_HEIGHT) {
+                frame_buffer[curr_y * SCREEN_WIDTH + curr_x] = color;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// INITIAL ENTRY & EXECUTIVE LOOP
+// ============================================================================
+void bootloader_main(void) {
+    // 1. Wake up the Switch graphic engine clocks
+    init_display_hardware();
+    
+    // 2. Fill background with your signature deep professional navy blue color
+    clear_screen(COLOR_BG_BLUE);
+    
+    // 3. Draw Top Header Panel: UI/SYS-SETTINGS/SETUP/PARTITION/SETUP
+    draw_rectangle(20, 20, 1240, 80, COLOR_BUTTON_BLUE);
+    
+    // 4. Draw Three Distinct Main Functional Columns from your design mockup
+    draw_rectangle(50,  150, 340, 420, COLOR_BUTTON_BLUE); // Left: Boot
+    draw_rectangle(470, 150, 340, 420, COLOR_BUTTON_BLUE); // Center: Tools
+    draw_rectangle(890, 150, 340, 420, COLOR_BUTTON_BLUE); // Right: Tool Boot
+    
+    // 5. Draw Bottom Footer Panel: FROM HEX8
+    draw_rectangle(20, 620, 1240, 80, COLOR_BUTTON_BLUE);
+
+    // 6. Infinite hardware freeze loop to hold the professional blue layout on screen
+    while(1) {
+        // Prevent core from crashing or shutting off
+    }
+}
+
+void __attribute__((section(".start"))) bootloader_entry(void) {
+    bootloader_main();
+}
