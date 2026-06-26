@@ -1,0 +1,33 @@
+name: Build Custom Switch Bootloader
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+
+    steps:
+    - name: Checkout repository code
+      uses: actions/checkout@v4
+
+    - name: Install required Switch build tools
+      run: |
+        sudo dkp-pacman -Syu --noconfirm
+        sudo dkp-pacman -S switch-pkg_config --noconfirm
+
+    - name: Compile Bootloader Payload
+      run: |
+        export DEVKITPRO=/opt/devkitpro
+        export PATH=$DEVKITPRO/devkitA64/bin:$PATH
+        make
+
+    - name: Upload Finished Binary Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: custom_bootloader_payload
+        path: custom_bootloader.bin
